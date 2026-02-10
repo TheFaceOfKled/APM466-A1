@@ -1,0 +1,163 @@
+---
+title: "APM466 A1 Forward Curve"
+output: pdf_document
+date: "2026-02-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+```{r}
+# bond_prices <- read_csv("~/APM466_Bid_Prices.csv")
+bond_prices <- read_csv("~/bonds_master_all.csv")
+
+```
+
+```{r}
+bonds_clean <- bond_prices %>% select(ISIN, `Issue Date`, Coupon, `Maturity Date`, date, `Close Price (% of par)`)
+bonds_selected <- bonds_clean %>% filter(substr(`Maturity Date`, start=1, stop=3)=="3/1" | substr(`Maturity Date`, start=1, stop=3)=="9/1") %>% filter(as.integer(substr(`Maturity Date`, start=5, stop=8)) < 2032) 
+
+bonds_selected$date <- format(as.Date(bonds_selected$date), "%m/%d/%Y")
+
+
+
+last_coupon <- as.Date("2025-09-01")
+curr_date <- as.Date(bonds_selected$date, format = "%m/%d/%Y")
+diff <- as.numeric(curr_date - last_coupon)
+
+bonds_data <- bonds_selected %>% mutate(accrued_interest = (diff/365)*as.numeric(sub("%", "", bonds_selected$Coupon)))
+
+bonds_data <- bonds_data %>% mutate(coupon_rate = as.numeric(sub("%", "", bonds_selected$Coupon))/100)
+
+
+
+dates = c("01/05/2026", "01/06/2026", "01/07/2026", "01/08/2026", "01/09/2026", "01/12/2026", "01/13/2026", "01/14/2026", "01/15/2026", "01/16/2026")
+
+bonds_data <- bonds_data %>% mutate(dirty_price = `Close Price (% of par)` + accrued_interest)
+bonds_list <- bonds_data %>% filter(date=="01/05/2026")
+bonds_list <- bonds_list %>%
+  arrange(as.Date(`Maturity Date`, format = "%m/%d/%Y"))
+bonds_list <- bonds_list %>% select(`Maturity Date`, date, dirty_price, coupon_rate)
+
+#bonds_selected <- bonds_selected %>% mutate(date = as.Date(date), `Maturity Date` = as.Date(`Maturity Date`))
+## bonds_jan5 <- bonds_clean %>% filter(date=="2026-01-05") 
+```
+
+```{r}
+bootstrap_yield_curve <- function(bonds_list, date1) {
+  
+  bonds_data <- bonds_data %>% mutate(dirty_price = `Close Price (% of par)` + accrued_interest)
+  bonds_list <- bonds_data %>% filter(date==date1)
+  bonds_list <- bonds_list %>%
+  arrange(as.Date(`Maturity Date`, format = "%m/%d/%Y"))
+  bonds_list <- bonds_list %>% select(`Maturity Date`, date, dirty_price, coupon_rate)
+  
+  n_bonds <- nrow(bonds_list)
+  spot_rates <- numeric(n_bonds)
+  
+  for (i in 1:n_bonds) {
+    price <- bonds_list[[3]][i]
+    coupon_rate <- bonds_list[[4]][i]
+    maturity <- as.Date(bonds_list[[1]][i], format="%m/%d/%Y")
+    date <- as.Date(bonds_list[[2]][i], format="%m/%d/%Y")
+    n_coupons <- floor((2*as.numeric(maturity - date))/365)
+    face_value <- 100*(1 + coupon_rate)
+    time_diff <- n_coupons/2
+    ytm <- (100*coupon_rate + (face_value - price)/(n_coupons/2))/((face_value + price)/2)
+    time_to_maturity <- as.numeric(maturity - date) / 365
+coupon_payment <- (coupon_rate / 2) * 100
+
+if (i == 1) {
+  # For the first bond (shortest maturity), YTM = Spot
+  # Assuming semi-annual compounding
+  spot_rates[i] <- 2 * (( (100 + coupon_payment) / price )^(1 / (2 * time_to_maturity)) - 1)
+} else {
+  # Calculate PV of all intermediate coupons using PREVIOUS spot rates
+  # You need the actual time for each previous coupon payment
+  pv_coupons <- 0
+  for (j in 1:(i-1)) {
+    # This assumes bonds are spaced exactly 0.5 years apart (the 'bucket' approach)
+    # In reality, you'd use the actual time to each coupon
+    t_j <- j * 0.5 
+    pv_coupons <- pv_coupons + coupon_payment / (1 + spot_rates[j]/2)^(2 * t_j)
+  }
+  
+  # Solve for the spot rate of the current bond
+  # Price = pv_coupons + (Face Value + Final Coupon) / (1 + z_i/2)^(2 * time_to_maturity)
+  remaining_price <- price - pv_coupons
+  final_cash_flow <- 100 + coupon_payment
+  
+  spot_rates[i] <- 2 * ((final_cash_flow / remaining_price)^(1 / (2 * time_to_maturity)) - 1)
+}
+  }
+  return (spot_rates)
+}
+
+dates = c("01/05/2026", "01/06/2026", "01/07/2026", "01/08/2026", "01/09/2026", "01/12/2026", "01/13/2026", "01/14/2026", "01/15/2026", "01/16/2026")
+rates_vector <- c()
+for (k in 1:10){
+  rates <- bootstrap_yield_curve(bonds_list, dates[k])
+  year1_rate <- rates[3]
+  for (l in seq(3, 9, by=2)){
+    f_rate <- 2*((((1 + rates[l+2]/2)^((l+2 - 1)))/((1 + rates[l]/2)^(l - 1)))^(1/2) - 1)
+    rates_vector <- c(rates_vector, f_rate)
+  }
+  
+}
+rates_vector2 <- matrix(rates_vector, nrow = 4, ncol = 10)
+
+
+```
+
+```{r}
+# Assuming rates_vector2 is now a 4x10 matrix (4 forward rates per day, 10 days)
+dates <- c("01/05/2026", "01/06/2026", "01/07/2026", "01/08/2026", "01/09/2026", 
+           "01/12/2026", "01/13/2026", "01/14/2026", "01/15/2026", "01/16/2026")
+
+# 1. Convert the matrix to a Data Frame and assign column names
+plot_data <- as.data.frame(rates_vector2)
+colnames(plot_data) <- dates
+
+# 2. Add the Start_Year column
+# Note: If your matrix only has 4 rows now (1y1y, 1y2y, 1y3y, 1y4y), 
+# this should be `c(1, 2, 3, 4)`. 
+# If it still has 7 rows, leave it as `c(1, 1.5, 2, 2.5, 3, 3.5, 4)`.
+plot_data <- plot_data %>%
+  mutate(Start_Year = c(1, 2, 3, 4)) 
+
+# 3. Pivot to Long Format for ggplot
+plot_data <- plot_data %>%
+  pivot_longer(
+    cols = -Start_Year,      # Select all columns EXCEPT Start_Year
+    names_to = "Date",       # New column for the Date labels
+    values_to = "Rate"       # New column for the Rate values
+  )
+
+# 4. Plot the Forward Curve
+ggplot(plot_data, aes(x = Start_Year, y = Rate, color = Date, group = Date)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 1) +
+  
+  # Set limits from 0 to 0.04 (4%), format y-axis as percentage
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 0.01),
+    limits = c(0, 0.04) # <-- This forces the axis to stop at 4%
+  ) +
+  
+  # X-axis
+  scale_x_continuous(breaks = seq(1, 4, by = 1)) +
+  
+  theme_bw() +
+  labs(
+    title = "1-Year Forward Curve (1y-4y) - Daily Overlay",
+    x = "Start Year of 1-Year Forward Rate",
+    y = "Forward Rate (annualized, semi-annual comp)",
+    color = "Date"
+  ) +
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+```

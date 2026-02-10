@@ -1,0 +1,138 @@
+---
+title: "APM466 A1"
+output: pdf_document
+date: "2026-02-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+```{r}
+# bond_prices <- read_csv("~/APM466_Bid_Prices.csv")
+bond_prices <- read_csv("~/bonds_master_all.csv")
+
+```
+
+```{r}
+bonds_clean <- bond_prices %>% select(ISIN, `Issue Date`, Coupon, `Maturity Date`, date, `Close Price (% of par)`)
+bonds_selected <- bonds_clean %>% filter(substr(`Maturity Date`, start=1, stop=3)=="3/1" | substr(`Maturity Date`, start=1, stop=3)=="9/1") %>% filter(as.integer(substr(`Maturity Date`, start=5, stop=8)) < 2032) %>% filter(`Maturity Date` != "3/1/2026")
+
+bonds_selected$date <- format(as.Date(bonds_selected$date), "%m/%d/%Y")
+
+
+
+last_coupon <- as.Date("2025-09-01")
+curr_date <- as.Date(bonds_selected$date, format = "%m/%d/%Y")
+diff <- as.numeric(curr_date - last_coupon)
+
+bonds_data <- bonds_selected %>% mutate(accrued_interest = (diff/365)*as.numeric(sub("%", "", bonds_selected$Coupon)))
+
+bonds_data <- bonds_data %>% mutate(coupon_rate = as.numeric(sub("%", "", bonds_selected$Coupon))/100)
+
+
+
+dates = c("01/05/2026", "01/06/2026", "01/07/2026", "01/08/2026", "01/09/2026", "01/12/2026", "01/13/2026", "01/14/2026", "01/15/2026", "01/16/2026")
+
+bonds_data <- bonds_data %>% mutate(dirty_price = `Close Price (% of par)` + accrued_interest)
+bonds_list <- bonds_data %>% filter(date=="01/05/2026")
+bonds_list <- bonds_list %>%
+  arrange(as.Date(`Maturity Date`, format = "%m/%d/%Y"))
+bonds_list <- bonds_list %>% select(`Maturity Date`, date, dirty_price, coupon_rate)
+
+#bonds_selected <- bonds_selected %>% mutate(date = as.Date(date), `Maturity Date` = as.Date(`Maturity Date`))
+## bonds_jan5 <- bonds_clean %>% filter(date=="2026-01-05") 
+```
+
+```{r}
+bootstrap_yield_curve <- function(bonds_list, date1) {
+  
+  bonds_data <- bonds_data %>% mutate(dirty_price = `Close Price (% of par)` + accrued_interest)
+  bonds_list <- bonds_data %>% filter(date==date1)
+  bonds_list <- bonds_list %>%
+  arrange(as.Date(`Maturity Date`, format = "%m/%d/%Y"))
+  bonds_list <- bonds_list %>% select(`Maturity Date`, date, dirty_price, coupon_rate)
+  
+  n_bonds <- nrow(bonds_list)
+  spot_rates <- numeric(n_bonds)
+  
+  for (i in 1:n_bonds) {
+    price <- bonds_list[[3]][i]
+    coupon_rate <- bonds_list[[4]][i]
+    maturity <- as.Date(bonds_list[[1]][i], format="%m/%d/%Y")
+    date <- as.Date(bonds_list[[2]][i], format="%m/%d/%Y")
+    n_coupons <- floor((2*as.numeric(maturity - date))/365)
+    face_value <- 100*(1 + coupon_rate)
+    
+    if (n_coupons == 0) {
+      discounted_sum <- 0
+      spot_rates[i] <- -log(price/face_value)/(1/2)
+    } else {
+      discounted_sum <- 0
+      for (j in 1:n_coupons){
+        discounted_sum <- discounted_sum + (coupon_rate/2) * 100 * exp(-spot_rates[j]*(j/2))
+      }
+      spot_rates[i] <- (-log((price-discounted_sum)/face_value)/((n_coupons+1)/2))
+    }
+  }
+  return (spot_rates)
+}
+
+dates = c("01/05/2026", "01/06/2026", "01/07/2026", "01/08/2026", "01/09/2026", "01/12/2026", "01/13/2026", "01/14/2026", "01/15/2026", "01/16/2026")
+rates_vector <- c()
+for (k in 1:10){
+  rates <- bootstrap_yield_curve(bonds_list, dates[k])
+  rates_vector <- c(rates_vector, rates)
+}
+rates_vector2 <- matrix(rates_vector, nrow = 10, ncol = 10)
+
+
+```
+
+```{r}
+dates <- c("01/05/2026", "01/06/2026", "01/07/2026", "01/08/2026", "01/09/2026", 
+           "01/12/2026", "01/13/2026", "01/14/2026", "01/15/2026", "01/16/2026")
+
+# 2. Convert the matrix to a Data Frame and assign column names
+plot_data <- as.data.frame(rates_vector2)
+colnames(plot_data) <- dates
+
+# 3. Add the Maturity column (0.5 to 5.5 years)
+# Note: 'n()' counts the number of rows automatically
+plot_data <- plot_data %>%
+  mutate(Maturity = seq(0.5, by = 0.5, length.out = n()))
+
+# 4. Pivot to Long Format for ggplot
+plot_data <- plot_data %>%
+  pivot_longer(
+    cols = -Maturity,      # Select all columns EXCEPT Maturity
+    names_to = "Date",     # New column for the Date labels
+    values_to = "Rate"     # New column for the Rate values
+  )
+
+ggplot(plot_data, aes(x = Maturity, y = Rate, color = Date, group = Date)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 1) +
+  
+  # Set limits from 0 to auto (NA)
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 0.01),
+    limits = c(0, NA) 
+  ) +
+  
+  scale_x_continuous(breaks = seq(0, 5, by = 0.5)) +
+  
+  theme_bw() +
+  labs(
+    title = "Yield Curve (Bucketed on 1-5y) - Daily Overlay",
+    x = "Maturity (years)",
+    y = "YTM (annual, semi-annual comp)",
+    color = "Date"
+  ) +
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+```
+
