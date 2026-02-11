@@ -161,3 +161,31 @@ ggplot(plot_data, aes(x = Start_Year, y = Rate, color = Date, group = Date)) +
     panel.grid.minor = element_blank()
   )
 ```
+
+```{r}
+# ---------------------------------------------------------
+# Part 5: Covariance Matrix for Forward Rates
+# ---------------------------------------------------------
+
+# 1. Calculate daily log-returns for Forwards
+# X_{i,j} = log(r_{i, j+1} / r_{i,j})
+# We divide day j+1 (cols 2:10) by day j (cols 1:9)
+forward_returns <- log(rates_vector2[, 2:10] / rates_vector2[, 1:9])
+
+# 2. Calculate the Covariance Matrix
+# Note: cov() computes covariance between columns. We transpose t() the matrix 
+# so that the 4 forward rates become columns and the 9 daily returns become rows.
+cov_matrix_forwards <- cov(t(forward_returns))
+
+# Print the result
+print("Covariance Matrix for Forward Rates (1yr-1yr to 1yr-4yr):")
+print(cov_matrix_forwards)
+
+pca_forwards <- eigen(cov_matrix_forwards)
+
+print("Forward Curve - Eigenvalues:")
+print(pca_forwards$values)
+
+print("Forward Curve - Eigenvectors:")
+print(pca_forwards$vectors)
+```

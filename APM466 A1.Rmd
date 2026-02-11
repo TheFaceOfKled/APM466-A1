@@ -17,7 +17,7 @@ bond_prices <- read_csv("~/bonds_master_all.csv")
 
 ```{r}
 bonds_clean <- bond_prices %>% select(ISIN, `Issue Date`, Coupon, `Maturity Date`, date, `Close Price (% of par)`)
-bonds_selected <- bonds_clean %>% filter(substr(`Maturity Date`, start=1, stop=3)=="3/1" | substr(`Maturity Date`, start=1, stop=3)=="9/1") %>% filter(as.integer(substr(`Maturity Date`, start=5, stop=8)) < 2032)
+bonds_selected <- bonds_clean %>% filter(substr(`Maturity Date`, start=1, stop=3)=="3/1" | substr(`Maturity Date`, start=1, stop=3)=="9/1") %>% filter(as.integer(substr(`Maturity Date`, start=5, stop=8)) < 2032) %>% filter(`Maturity Date` != "3/1/2026")
 
 bonds_selected$date <- format(as.Date(bonds_selected$date), "%m/%d/%Y")
 
@@ -85,7 +85,7 @@ for (k in 1:10){
   rates <- bootstrap_yield_curve(bonds_list, dates[k])
   rates_vector <- c(rates_vector, rates)
 }
-rates_vector2 <- matrix(rates_vector, nrow = 11, ncol = 10)
+rates_vector2 <- matrix(rates_vector, nrow = 10, ncol = 10)
 
 
 ```
@@ -101,7 +101,7 @@ colnames(plot_data) <- dates
 # 3. Add the Maturity column (0.5 to 5.5 years)
 # Note: 'n()' counts the number of rows automatically
 plot_data <- plot_data %>%
-  mutate(Maturity = seq(0, by = 0.5, length.out = n()))
+  mutate(Maturity = seq(0.5, by = 0.5, length.out = n()))
 
 # 4. Pivot to Long Format for ggplot
 plot_data <- plot_data %>%
@@ -121,7 +121,7 @@ ggplot(plot_data, aes(x = Maturity, y = Rate, color = Date, group = Date)) +
     limits = c(0, NA) 
   ) +
   
-  scale_x_continuous(breaks = seq(0, 5, by = 1)) +
+  scale_x_continuous(breaks = seq(0, 5, by = 0.5)) +
   
   theme_bw() +
   labs(
@@ -136,3 +136,29 @@ ggplot(plot_data, aes(x = Maturity, y = Rate, color = Date, group = Date)) +
   )
 ```
 
+```{r}
+yields_1to5 <- rates_vector2[c(2, 4, 6, 8, 10), ]
+
+# 2. Calculate daily log-returns for Yields
+# X_{i,j} = log(r_{i, j+1} / r_{i,j})
+# We divide day j+1 (cols 2:10) by day j (cols 1:9)
+yield_returns <- log(yields_1to5[, 2:10] / yields_1to5[, 1:9])
+
+# 3. Calculate the Covariance Matrix
+# Note: cov() in R computes the covariance between columns. 
+# Since our maturities (the random variables X_i) are in rows and the days are in columns,
+# we need to transpose the matrix using t() before passing it to cov().
+cov_matrix_yields <- cov(t(yield_returns))
+
+# Print the result
+print("Covariance Matrix for Yields (1yr-5yr):")
+print(cov_matrix_yields)
+
+pca_yields <- eigen(cov_matrix_yields)
+
+print("Yield Curve - Eigenvalues:")
+print(pca_yields$values)
+
+print("Yield Curve - Eigenvectors:")
+print(pca_yields$vectors)
+```
